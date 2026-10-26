@@ -247,7 +247,8 @@ Keys — global:
 |---|---|
 | Enter | submit (idle only) |
 | Alt-Enter / Ctrl-J | newline in input |
-| PgUp/PgDn, Ctrl-V / Meta-V | scroll conversation down/up; auto-follow unless scrolled up |
+| Ctrl-V / Meta-V | scroll conversation forward/back by half a screen |
+| PgDn / PgUp | scroll conversation forward/back by a full screen |
 | Ctrl-X o | toggle all tool output |
 | Ctrl-X t | toggle all thinking |
 | Ctrl-X w | wire inspector overlay (raw request/response JSON) |
@@ -275,10 +276,12 @@ characters.
 | Ctrl-U | kill to start of line |
 | Ctrl-Y | yank (paste) the last kill |
 
+- Conversation auto-follows new output unless the user has scrolled up;
+  scrolling back to the bottom resumes following.
 - Single-slot kill buffer, internal to bridle (not the system clipboard).
-- Meta = Alt. On macOS the terminal must send Option as Meta (Terminal.app:
-  "Use Option as Meta key"; iTerm2: Option key "Esc+"); otherwise Option-F
-  types `ƒ`. crossterm reports these as `ALT`-modified keys.
+- Meta = Alt/Option. The terminal must send Option as Meta (the user's
+  Ghostty is configured this way); crossterm reports these as
+  `ALT`-modified keys.
 - Toggles live under a `Ctrl-X` prefix so Ctrl-letter keys stay free for
   editing. The status line shows `C-x-` while the prefix is pending; any
   unbound second key cancels it.

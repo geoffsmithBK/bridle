@@ -241,17 +241,47 @@ Approval overlay (modal, centered): title `Approve {tool}?` + path; body is
 the exact bash command or the diff (j/k/PgUp/PgDn scroll); footer
 `[y] approve  [n] deny  [r] deny with reason` (r opens an inline text field).
 
-Keys:
+Keys — global:
 
 | Key | Action |
 |---|---|
 | Enter | submit (idle only) |
-| Alt-Enter / Ctrl-J | newline |
-| PgUp/PgDn, Ctrl-U/Ctrl-D | scroll; auto-follow unless scrolled up |
-| Ctrl-O | toggle all tool output |
-| Ctrl-T | toggle all thinking |
-| Ctrl-W | wire inspector overlay (raw request/response JSON) |
+| Alt-Enter / Ctrl-J | newline in input |
+| PgUp/PgDn, Ctrl-V / Meta-V | scroll conversation down/up; auto-follow unless scrolled up |
+| Ctrl-X o | toggle all tool output |
+| Ctrl-X t | toggle all thinking |
+| Ctrl-X w | wire inspector overlay (raw request/response JSON) |
 | Ctrl-C | interrupt if busy; else clear input; twice on empty input quits |
+
+Keys — input editing (emacs/readline basics). "Line" means the current
+logical line of the multi-line input. A "word" is a run of non-whitespace
+characters.
+
+| Key | Action |
+|---|---|
+| Ctrl-F / → | forward one character |
+| Ctrl-B / ← | back one character |
+| Meta-F | forward to the end of the current/next word |
+| Meta-B | back to the start of the current/previous word |
+| Ctrl-A / Home | start of line |
+| Ctrl-E / End | end of line |
+| Ctrl-P / ↑ | previous line |
+| Ctrl-N / ↓ | next line |
+| Ctrl-D / Delete | delete character forward |
+| Ctrl-H / Backspace | delete character back |
+| Meta-D | kill word forward |
+| Meta-Backspace | kill word back |
+| Ctrl-K | kill to end of line (at end of line: join with next line) |
+| Ctrl-U | kill to start of line |
+| Ctrl-Y | yank (paste) the last kill |
+
+- Single-slot kill buffer, internal to bridle (not the system clipboard).
+- Meta = Alt. On macOS the terminal must send Option as Meta (Terminal.app:
+  "Use Option as Meta key"; iTerm2: Option key "Esc+"); otherwise Option-F
+  types `ƒ`. crossterm reports these as `ALT`-modified keys.
+- Toggles live under a `Ctrl-X` prefix so Ctrl-letter keys stay free for
+  editing. The status line shows `C-x-` while the prefix is pending; any
+  unbound second key cancels it.
 
 Slash commands: `/new` (reset conversation, new log files), `/quit`.
 

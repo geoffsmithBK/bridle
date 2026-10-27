@@ -113,4 +113,19 @@ sleep 1
 tmux has-session -t "$session" 2>/dev/null && fail "bridle did not exit"
 ls "$work"/.bridle/sessions/*.jsonl >/dev/null || fail "no wire log"
 
+echo "== --continue resumes the session"
+tmux new-session -d -s "$session" -x 120 -y 40 -c "$work" "$bin $* --continue"
+wait_for 15 "resumed notice" on_screen "resumed "
+on_screen "AUTO-APPROVE" && fail "auto-approve survived a restart"
+answers() { transcript | grep -c '^## Assistant' || true; }
+before=$(answers)
+type_line "In one word: what did the echo command in my first !command print?"
+new_answer() { [ "$(answers)" -gt "$before" ]; }
+wait_for 120 "an answer after resuming" new_answer
+wait_for 120 "idle" idle
+in_transcript "## Resumed" || fail "transcript has no resume marker"
+keys C-c C-c
+gone() { ! tmux has-session -t "$session" 2>/dev/null; }
+wait_for 5 "bridle to exit after resume" gone
+
 echo "PASS"

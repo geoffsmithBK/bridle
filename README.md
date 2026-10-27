@@ -19,6 +19,8 @@ Then, in the project you want to work on:
 - `--url` — server base URL (default `http://127.0.0.1:9931`)
 - `--model` — model id to request (default: the server's first model)
 - `--wire-raw` — also log every raw SSE line
+- `-c`, `--continue` — resume the most recent session in this directory
+- `--resume STAMP` — resume a specific session (names as in `.bridle/sessions/`)
 
 Install with `cargo install --path .` from this repository.
 
@@ -104,7 +106,21 @@ Each session writes to `.bridle/sessions/` in the launch directory:
 - `<time>.jsonl` — one line per model request: the full request body and
   the assembled response (plus raw SSE lines with `--wire-raw`)
 
+- `<time>.session.json` — the conversation history, saved after every
+  message and tool result (written atomically), used by `--continue`
+
 `.bridle/` contains a `.gitignore` so logs are never committed.
+
+## Resuming
+
+`bridle --continue` reopens the latest session in the current directory with
+its full history, so the model picks up where it left off. The system prompt
+is rebuilt (today's date, the current AGENTS.md), a `!cd` working directory is
+restored, and the transcript and wire log continue in the same files.
+Auto-approve is never restored. If bridle was killed in the middle of a set
+of tool calls, the unanswered ones are recorded as "Cancelled (bridle
+exited)." A long history is sent in full on the first request, so that reply
+may take a while to start.
 
 ## Testing
 

@@ -273,3 +273,10 @@ fn ctrl_x_a_turns_auto_approve_off_only_when_on() {
     a.on_agent_event(AgentEvent::AutoApprove(false));
     assert!(!a.auto_approve);
 }
+
+#[test]
+fn replayed_user_messages_become_user_blocks() {
+    let mut a = app();
+    a.on_agent_event(AgentEvent::UserMessage("from last time".into()));
+    assert_eq!(a.blocks, vec![Block::User("from last time".into())]);
+}

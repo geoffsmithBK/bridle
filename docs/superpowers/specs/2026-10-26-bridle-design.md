@@ -20,7 +20,7 @@ authored by bridle itself.
 
 ### Non-goals for v1
 
-- Multiple providers or endpoints in one session; session persistence/resume.
+- Multiple providers or endpoints in one session.
 - Context compaction (262k context window makes this a later problem).
 - Sandboxing beyond the sudo guard (planned: `sandbox-exec` on macOS,
   an equivalent such as bubblewrap/landlock on Linux).
@@ -397,3 +397,25 @@ Directory `./.bridle/sessions/` under the project root (launch directory);
   the Arch machine.
 - Manual end-to-end against the live server: create a file, edit it, run it,
   deny a command with a reason, interrupt a long `sleep`.
+
+## 13. Resuming sessions (added after v1)
+
+- Flags: `-c`/`--continue` (latest session in the launch directory) and
+  `--resume STAMP`. Both are checked before the TUI starts; a missing
+  session prints an error (with recent stamps) and exits 1.
+- `<stamp>.session.json` beside the transcript holds `{version: 1, cwd,
+  messages}` (history without the system prompt). It is rewritten
+  atomically (temp file + rename) after every history change: the user
+  message, each assistant message, each tool result, and each command.
+- On resume: history restored exactly; system prompt rebuilt (date,
+  current AGENTS.md); saved cwd restored if it still exists; transcript and
+  wire log reopened for appending with a `## Resumed …` marker; the UI is
+  shown the history by replaying it as ordinary events (thinking is not
+  shown — it was never part of the history); auto-approve is always off.
+- Tool calls left without results (bridle killed mid-batch) get
+  `Cancelled (bridle exited).`, preserving the §5 invariant.
+- An unreadable or wrong-version file: error line, fresh session.
+- Session names: a stamp already in use (e.g. `/new` within the same
+  second) gets `-2`, `-3`, … so sessions never overwrite each other.
+- Not included: an in-app `/resume` or picker; resuming across directories;
+  context compaction.

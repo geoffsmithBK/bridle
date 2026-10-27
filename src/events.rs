@@ -93,6 +93,8 @@ pub enum AgentEvent {
     /// Pretty-printed JSON of one request/response exchange, for the inspector.
     Wire(String),
     Error(String),
+    /// A user message replayed from a resumed session.
+    UserMessage(String),
     /// Something worth a dim line in the conversation (e.g. AGENTS.md loaded).
     Info(String),
     /// The core finished handling a command and is waiting for the next one.

@@ -27,6 +27,8 @@ pub struct AgentOptions {
     pub log: bool,
     /// Model requests allowed per user message before asking to continue.
     pub max_steps: usize,
+    /// Resume this saved session (a stamp from `session::resolve`).
+    pub resume: Option<String>,
 }
 
 enum Decision {
@@ -74,8 +76,100 @@ impl<L: Llm> Agent<L> {
             quit: Cell::new(false),
             auto_approve: Cell::new(false),
         };
-        agent.reset();
+        match agent.options.resume.clone() {
+            None => agent.reset(),
+            Some(stamp) => {
+                if let Err(e) = agent.resume(&stamp) {
+                    agent.reset();
+                    agent.emit(AgentEvent::Error(format!(
+                        "could not resume {stamp}: {e}; started a new session"
+                    )));
+                }
+            }
+        }
         agent
+    }
+
+    /// Load a saved session: its history (repaired if a crash left calls
+    /// unanswered) under a freshly built system prompt, and its working
+    /// directory. The UI is shown the history by replaying it as events.
+    fn resume(&mut self, stamp: &str) -> Result<(), String> {
+        let saved = crate::session::load(&crate::session::session_path(&self.ctx.project_root, stamp))?;
+        let mut history = saved.messages;
+        let repaired = crate::session::repair(&mut history);
+        if saved.cwd.is_dir() {
+            self.ctx.cwd = saved.cwd;
+        }
+        let agents_md = crate::prompt::load_agents_md(&self.ctx.project_root);
+        let prompt = crate::prompt::system_prompt(&self.ctx.cwd, &crate::time::today(), agents_md.as_deref());
+        self.messages = vec![Message::System { content: prompt }];
+        self.messages.extend(history.iter().cloned());
+        if self.options.log {
+            self.log = SessionLog::resume(&self.ctx.project_root, stamp).map_err(|e| e.to_string())?;
+        }
+        self.log.md(&format!("## Resumed {}\n", crate::time::file_stamp()));
+        if agents_md.is_some() {
+            self.emit(AgentEvent::Info("loaded AGENTS.md".into()));
+        }
+        self.replay(&history);
+        // After the replay, so it is on screen however long the history is.
+        self.emit(AgentEvent::Info(format!("resumed {stamp} ({} messages)", history.len())));
+        if repaired > 0 {
+            let s = if repaired == 1 { "" } else { "s" };
+            self.emit(AgentEvent::Info(format!(
+                "{repaired} unanswered tool call{s} marked cancelled (bridle had exited)"
+            )));
+        }
+        if self.ctx.cwd != self.ctx.project_root {
+            self.emit(AgentEvent::CwdChanged(self.ctx.cwd.clone()));
+        }
+        self.save();
+        self.emit(AgentEvent::Idle);
+        Ok(())
+    }
+
+    /// Show restored history in the UI using the ordinary events.
+    fn replay(&self, history: &[Message]) {
+        for m in history {
+            match m {
+                Message::System { .. } => {}
+                Message::User { content } => self.emit(AgentEvent::UserMessage(content.clone())),
+                Message::Assistant { content, tool_calls } => {
+                    if !content.is_empty() {
+                        self.emit(AgentEvent::TextDelta(content.clone()));
+                    }
+                    for c in tool_calls {
+                        let summary = tools::summarize(&c.function.name, &c.function.arguments);
+                        self.emit(AgentEvent::ToolCallParsed {
+                            id: c.id.clone(),
+                            name: c.function.name.clone(),
+                            summary,
+                        });
+                    }
+                }
+                Message::Tool { tool_call_id, content } => {
+                    let status = if content.starts_with("Error:") {
+                        ToolStatus::Error
+                    } else if content.starts_with("Denied by user") {
+                        ToolStatus::Denied
+                    } else if content.starts_with("Cancelled") || content.ends_with("[killed: interrupted]") {
+                        ToolStatus::Cancelled
+                    } else {
+                        ToolStatus::Ok
+                    };
+                    self.emit(AgentEvent::ToolResult {
+                        id: tool_call_id.clone(),
+                        status,
+                        content: content.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    /// Save the history so the session can be resumed.
+    fn save(&mut self) {
+        self.log.save_session(&self.ctx.cwd, &self.messages[1..]);
     }
 
     /// Handle commands until Quit. Returns the final history.
@@ -94,6 +188,7 @@ impl<L: Llm> Agent<L> {
                 // Only meaningful while busy; stale ones are dropped.
                 Command::Approve | Command::ApproveAll | Command::Deny(_) | Command::Interrupt => continue,
             }
+            self.save();
             if self.quit.get() {
                 break;
             }
@@ -162,6 +257,7 @@ impl<L: Llm> Agent<L> {
         let before = self.messages.clone();
         self.log.md(&format!("## User\n\n{text}\n"));
         self.push_user(text.clone());
+        self.save();
 
         let mut steps = 0;
         let mut first_request = true;
@@ -223,6 +319,7 @@ impl<L: Llm> Agent<L> {
 
             let calls = completion.tool_calls.clone();
             self.messages.push(Message::Assistant { content: completion.content, tool_calls: calls.clone() });
+            self.save();
             if calls.is_empty() {
                 self.emit(AgentEvent::TurnDone {
                     usage: completion.usage,
@@ -235,6 +332,7 @@ impl<L: Llm> Agent<L> {
             for (i, call) in calls.iter().enumerate() {
                 let (status, content) = self.run_call(call);
                 self.messages.push(Message::Tool { tool_call_id: call.id.clone(), content });
+                self.save();
                 if status == ToolStatus::Cancelled {
                     for rest in &calls[i + 1..] {
                         self.cancel_call(rest);

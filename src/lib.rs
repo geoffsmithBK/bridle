@@ -10,6 +10,7 @@ pub mod events;
 pub mod llm;
 pub mod log;
 pub mod prompt;
+pub mod session;
 pub mod time;
 pub mod tools;
 pub mod ui;

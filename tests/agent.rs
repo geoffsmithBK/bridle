@@ -68,6 +68,32 @@ impl Llm for FakeLlm {
     }
 }
 
+/// An agent over an existing project dir, with logging (and so saving) on.
+fn start_at(dir: &std::path::Path, script: Vec<Step>, resume: Option<String>) -> Harness {
+    let ctx = bridle::tools::ToolContext {
+        cwd: dir.to_path_buf(),
+        project_root: dir.to_path_buf(),
+        shim_dir: bridle::tools::guard::make_shim_dir().unwrap(),
+    };
+    let requests = Arc::new(Mutex::new(vec![]));
+    let llm = FakeLlm { script: Mutex::new(script.into()), requests: requests.clone() };
+    let (cmd, cmd_rx) = channel();
+    let (ev_tx, ev) = channel();
+    let options = AgentOptions { model: None, log: true, max_steps: 50, resume };
+    let agent = Agent::new(llm, options, ctx, ev_tx, cmd_rx);
+    let handle = std::thread::spawn(move || agent.run());
+    Harness { cmd, ev, handle, requests, dir: dir.to_path_buf() }
+}
+
+/// Events emitted before the first command (startup, resume replay).
+fn startup_events(h: &Harness) -> Vec<AgentEvent> {
+    let mut out = vec![];
+    while let Ok(e) = h.ev.recv_timeout(std::time::Duration::from_millis(300)) {
+        out.push(e);
+    }
+    out
+}
+
 struct Harness {
     cmd: Sender<Command>,
     ev: Receiver<AgentEvent>,
@@ -89,7 +115,7 @@ fn start_in(script: Vec<Step>, max_steps: usize, setup: impl FnOnce(&std::path::
     let llm = FakeLlm { script: Mutex::new(script.into()), requests: requests.clone() };
     let (cmd, cmd_rx) = channel();
     let (ev_tx, ev) = channel();
-    let options = AgentOptions { model: None, log: false, max_steps };
+    let options = AgentOptions { model: None, log: false, max_steps, resume: None };
     let agent = Agent::new(llm, options, ctx, ev_tx, cmd_rx);
     let handle = std::thread::spawn(move || agent.run());
     Harness { cmd, ev, handle, requests, dir }
@@ -502,5 +528,172 @@ fn new_session_turns_auto_approve_off() {
         Command::Approve
     });
     assert_eq!(asked, 1);
+    h.finish();
+}
+
+#[test]
+fn resumed_session_continues_with_the_same_history() {
+    let dir = common::temp_dir();
+    let h = start_at(
+        &dir,
+        vec![calls(vec![call("c1", "read", r#"{"path":"a.txt"}"#)]), text("It says hi.")],
+        None,
+    );
+    std::fs::write(dir.join("a.txt"), "hi\n").unwrap();
+    h.submit("what's in a.txt?", never);
+    let first = h.finish();
+    let stamp = bridle::session::list(&dir).pop().expect("session saved");
+
+    let h = start_at(&dir, vec![text("Still hi.")], Some(stamp.clone()));
+    let events = startup_events(&h);
+    assert!(events.contains(&AgentEvent::Info(format!("resumed {stamp} (4 messages)"))), "{events:?}");
+    assert!(events.contains(&AgentEvent::UserMessage("what's in a.txt?".into())));
+    assert!(events.contains(&AgentEvent::ToolResult {
+        id: "c1".into(),
+        status: ToolStatus::Ok,
+        content: "     1│ hi\n".into()
+    }));
+    assert!(events.contains(&AgentEvent::TextDelta("It says hi.".into())));
+    assert!(events.contains(&AgentEvent::Idle)); // clears the replay's "running …" activity
+
+    h.submit("and now?", never);
+    let sent = h.requests.lock().unwrap()[0]["messages"].clone();
+    assert_eq!(sent.as_array().unwrap().len(), 6); // system + 4 restored + new user
+    assert_eq!(sent[1]["content"], "what's in a.txt?");
+    assert_eq!(sent[5]["content"], "and now?");
+    let resumed = h.finish();
+    assert_eq!(resumed[1..5], first[1..5]);
+    let md = std::fs::read_to_string(dir.join(format!(".bridle/sessions/{stamp}.md"))).unwrap();
+    assert!(md.contains("## Resumed"), "{md}");
+}
+
+#[test]
+fn resume_restores_cwd_but_never_auto_approve() {
+    let dir = common::temp_dir();
+    std::fs::create_dir(dir.join("sub")).unwrap();
+    let h =
+        start_at(&dir, vec![calls(vec![call("c1", "bash", r#"{"command":"echo 1"}"#)]), text("ok")], None);
+    h.submit("go", |_| Command::ApproveAll);
+    h.cmd.send(Command::UserShell("cd sub".into())).unwrap();
+    h.until_idle(never);
+    h.finish();
+    let stamp = bridle::session::list(&dir).pop().unwrap();
+
+    let h = start_at(
+        &dir,
+        vec![calls(vec![call("c2", "bash", r#"{"command":"pwd"}"#)]), text("ok")],
+        Some(stamp),
+    );
+    let events = startup_events(&h);
+    assert!(events.contains(&AgentEvent::CwdChanged(dir.join("sub"))), "{events:?}");
+    assert!(!events.contains(&AgentEvent::AutoApprove(true)));
+    let mut asked = 0;
+    h.submit("where am I?", |_| {
+        asked += 1;
+        Command::Approve
+    });
+    assert_eq!(asked, 1);
+    let m = h.finish();
+    assert_eq!(tool_results(&m).last().unwrap(), &format!("{}\n[exit code: 0]", dir.join("sub").display()));
+}
+
+#[test]
+fn resume_answers_calls_a_crash_left_open() {
+    let dir = common::temp_dir();
+    let saved = bridle::session::SavedSession {
+        version: bridle::session::VERSION,
+        cwd: dir.clone(),
+        messages: vec![
+            Message::User { content: "go".into() },
+            Message::Assistant {
+                content: "".into(),
+                tool_calls: vec![call("c1", "read", "{}"), call("c2", "read", "{}")],
+            },
+            Message::Tool { tool_call_id: "c1".into(), content: "Error: missing".into() },
+        ],
+    };
+    let path = bridle::session::session_path(&dir, "2026-10-26T09-00-00");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    bridle::session::save(&path, &saved).unwrap();
+
+    let h = start_at(&dir, vec![text("ok")], Some("2026-10-26T09-00-00".into()));
+    let events = startup_events(&h);
+    assert!(events.contains(&AgentEvent::ToolResult {
+        id: "c2".into(),
+        status: ToolStatus::Cancelled,
+        content: bridle::session::EXITED.into()
+    }));
+    assert!(events.iter().any(|e| matches!(e, AgentEvent::Info(t) if t.contains("1 unanswered tool call"))));
+    h.submit("again", never);
+    h.finish(); // asserts every call answered
+}
+
+#[test]
+fn unreadable_session_starts_fresh_with_an_error() {
+    let dir = common::temp_dir();
+    let path = bridle::session::session_path(&dir, "bad");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "{garbage").unwrap();
+    let h = start_at(&dir, vec![text("fresh")], Some("bad".into()));
+    let events = startup_events(&h);
+    assert!(
+        events.iter().any(|e| matches!(e, AgentEvent::Error(t) if t.starts_with("could not resume bad"))),
+        "{events:?}"
+    );
+    h.submit("hi", never);
+    let m = h.finish();
+    assert_eq!(m.len(), 3);
+}
+
+#[test]
+fn history_is_saved_as_the_turn_progresses() {
+    let dir = common::temp_dir();
+    let h =
+        start_at(&dir, vec![calls(vec![call("c1", "bash", r#"{"command":"echo 1"}"#)]), text("ok")], None);
+    startup_events(&h);
+    h.cmd.send(Command::Submit("go".into())).unwrap();
+    // While the approval is pending, the user message and the call are already on disk.
+    loop {
+        if let AgentEvent::ApprovalNeeded(_) = h.ev.recv().unwrap() {
+            break;
+        }
+    }
+    let stamp = bridle::session::list(&dir).pop().unwrap();
+    let saved = bridle::session::load(&bridle::session::session_path(&dir, &stamp)).unwrap();
+    assert_eq!(saved.messages.len(), 2);
+    h.cmd.send(Command::Approve).unwrap();
+    h.until_idle(never);
+    h.finish();
+}
+
+#[test]
+fn replay_shows_interrupted_commands_as_cancelled_and_ends_with_the_notice() {
+    let dir = common::temp_dir();
+    let saved = bridle::session::SavedSession {
+        version: bridle::session::VERSION,
+        cwd: dir.clone(),
+        messages: vec![
+            Message::User { content: "sleep".into() },
+            Message::Assistant {
+                content: "".into(),
+                tool_calls: vec![call("c1", "bash", r#"{"command":"sleep 60"}"#)],
+            },
+            Message::Tool { tool_call_id: "c1".into(), content: "[killed: interrupted]".into() },
+        ],
+    };
+    let path = bridle::session::session_path(&dir, "s1");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    bridle::session::save(&path, &saved).unwrap();
+    let h = start_at(&dir, vec![], Some("s1".into()));
+    let events = startup_events(&h);
+    assert!(events.contains(&AgentEvent::ToolResult {
+        id: "c1".into(),
+        status: ToolStatus::Cancelled,
+        content: "[killed: interrupted]".into()
+    }));
+    let notice =
+        events.iter().position(|e| matches!(e, AgentEvent::Info(t) if t.starts_with("resumed s1"))).unwrap();
+    let last_replayed = events.iter().rposition(|e| matches!(e, AgentEvent::ToolResult { .. })).unwrap();
+    assert!(notice > last_replayed, "{events:?}");
     h.finish();
 }

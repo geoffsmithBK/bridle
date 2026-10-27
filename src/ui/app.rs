@@ -248,6 +248,7 @@ impl App {
             }
             AgentEvent::Wire(json) => self.wire.push(json),
             AgentEvent::Error(e) => self.blocks.push(Block::Error(e)),
+            AgentEvent::UserMessage(text) => self.blocks.push(Block::User(text)),
             AgentEvent::Info(text) => self.blocks.push(Block::Info(text)),
             AgentEvent::Idle => {
                 self.busy = false;

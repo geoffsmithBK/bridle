@@ -26,13 +26,25 @@ fn main() -> anyhow::Result<()> {
     };
 
     let root = std::env::current_dir()?;
+    // Check --continue / --resume before taking over the terminal, so a
+    // missing session is a plain error message.
+    let resume = match &config.resume {
+        None => None,
+        Some(r) => match bridle::session::resolve(&root, r) {
+            Ok(stamp) => Some(stamp),
+            Err(e) => {
+                eprintln!("bridle: {e}");
+                std::process::exit(1);
+            }
+        },
+    };
     let shim_dir = guard::make_shim_dir()?;
     let ctx = ToolContext { cwd: root.clone(), project_root: root.clone(), shim_dir: shim_dir.clone() };
 
     let (cmd_tx, cmd_rx) = channel();
     let (ev_tx, ev_rx) = channel();
     let llm = LlamaClient::new(&config.url, config.wire_raw);
-    let options = AgentOptions { model: config.model, log: true, max_steps: DEFAULT_MAX_STEPS };
+    let options = AgentOptions { model: config.model, log: true, max_steps: DEFAULT_MAX_STEPS, resume };
     let agent = Agent::new(llm, options, ctx, ev_tx, cmd_rx);
     let agent_thread = std::thread::spawn(move || agent.run());
 

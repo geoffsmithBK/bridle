@@ -4,6 +4,7 @@
 //! terminal. The UI (`ui`) never does HTTP or runs tools. They talk only
 //! through the types in `events`.
 
+pub mod agent;
 pub mod config;
 pub mod events;
 pub mod llm;

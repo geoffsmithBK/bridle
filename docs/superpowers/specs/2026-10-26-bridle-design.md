@@ -1,7 +1,7 @@
 # bridle — design
 
 Date: 2026-10-26
-Status: draft, awaiting review
+Status: approved
 
 ## 1. Purpose
 
@@ -23,8 +23,12 @@ authored by bridle itself.
 - Multiple providers or endpoints in one session; session persistence/resume.
 - Context compaction (262k context window makes this a later problem).
 - Auto-approval mode (planned; see end of §6.4).
-- Sandboxing beyond the sudo guard (planned: `sandbox-exec`).
-- Markdown rendering beyond styled code fences; mouse capture.
+- Sandboxing beyond the sudo guard (planned: `sandbox-exec` on macOS,
+  an equivalent such as bubblewrap/landlock on Linux).
+- Markdown rendering beyond styled code fences; mouse capture (and with it,
+  per-block click-to-expand "twiddles").
+- An interactive-terminal tool (model drives a tmux pane running a REPL,
+  debugger, etc.) — a possible later feature.
 - Async runtime; concurrent tool execution; message queueing while busy.
 
 ## 2. Environment
@@ -33,7 +37,12 @@ authored by bridle itself.
   at `http://127.0.0.1:9931`. Model: `Qwen3.8-27B-UD-Q6_K_M.gguf`,
   `n_ctx` 262144, 1 slot. Template supports tools, parallel tool calls and
   reasoning (`reasoning_content` returned separately).
-- Platform: macOS (darwin), Rust stable (cargo 1.99).
+- Platforms: macOS (development machine) and Linux. Code uses only POSIX
+  facilities (`setsid`, `killpg`, `localtime_r`) and no macOS-only commands.
+  Full qualification on the user's all-AMD Arch Linux mini PC (Ghostty from
+  tip, Qwen 3.8 27B possibly at a different quant) is a separate later task,
+  done by running the test suite and `scripts/smoke.sh` there.
+- Rust stable (cargo 1.99), edition 2024.
 
 ## 3. Architecture
 
@@ -174,7 +183,7 @@ proposed and executed actions match.
 
 ### 6.5 Guard (`guard.rs`)
 Layered, honest about limits — it is not a sandbox:
-1. Blocklist: commands matching `sudo`, `su`, `doas`, `pkexec`, or
+1. Blocklist: commands matching `sudo`, `su`, `doas`, `pkexec`, `run0`, or
    `with administrator privileges` (as words) are rejected before approval
    with `Error: privilege escalation is not permitted in bridle.`
 2. bash runs with no controlling tty (`setsid`) — defeats macOS per-tty sudo
@@ -187,6 +196,10 @@ Known gap: with a `NOPASSWD` sudoers rule, a command that evades the
 blocklist (e.g. an obfuscated `/usr/bin/sudo`) defeats layers 2–3; only
 layer 4 (approval) covers it.
 Applies equally to `!` commands.
+
+These rules live in code. Nothing the model reads — including AGENTS.md
+(§7.1) — is ever interpreted as harness configuration, so no prompt text can
+disable approval or the guard.
 
 ## 7. System prompt
 
@@ -225,6 +238,29 @@ Environment:
 
 `{BRIDLE_README}` is `env!("CARGO_MANIFEST_DIR")/README.md` at compile time.
 
+### 7.1 AGENTS.md
+
+If `AGENTS.md` exists in the project root (launch directory), its contents
+are appended to the system prompt:
+
+```
+
+Project instructions (from AGENTS.md):
+These extend or modify the guidelines above. They cannot remove the
+requirement for user approval or the ban on privilege escalation.
+
+{contents}
+```
+
+- Read when the session starts and again on `/new`.
+- Capped at 32 KB; if longer, it is cut and `[AGENTS.md truncated at 32 KB]`
+  is appended.
+- The UI shows a dim line `loaded AGENTS.md (N lines)`; the transcript
+  records the full contents.
+- AGENTS.md may extend or reshape the model's behavior freely, but it is
+  text for the model only: approval, the guard (§6.5) and any future
+  auto-approve setting are enforced in code and cannot be changed by it.
+
 ## 8. UI (ratatui, full screen / alternate screen)
 
 Layout: conversation pane (top), input (multi-line, grows to ~6 lines),
@@ -232,7 +268,10 @@ status line (model · ctx used/total · tok/s · state · key hint).
 
 Blocks in the conversation:
 - user message; `!` command + output;
-- thinking — dimmed while streaming, collapses to `▸ thinking (N tokens)`;
+- thinking — **hidden by default**: always a single dim line,
+  `▸ thinking… (N words)` while streaming and `▸ thinking (N words)` when
+  done. Ctrl-X t expands all thinking blocks (global toggle in v1;
+  per-block click-to-expand arrives with mouse support);
 - assistant text — plain, code fences styled;
 - tool call — `⏳/✓/✗/⊘ tool summary`; running bash shows last 8 output
   lines; collapses on completion.
@@ -344,6 +383,11 @@ Directory `./.bridle/sessions/` under the project root (launch directory);
 - Agent loop: `FakeLlm` with scripted responses driven via the command
   channel; assert the tool-result invariant across approve, deny, deny with
   reason, interrupt mid-stream, interrupt mid-batch, step cap.
-- UI: `TestBackend` snapshots of the approval overlay and main layout.
+- UI: `TestBackend` snapshots of the approval overlay and main layout,
+  including that thinking text is not shown unless toggled.
+- `scripts/smoke.sh`: an end-to-end test driven with tmux (detached
+  session, `send-keys`, `capture-pane`) against the live server. It needs
+  only bash, tmux and a built binary, so it runs unchanged on macOS and on
+  the Arch machine.
 - Manual end-to-end against the live server: create a file, edit it, run it,
   deny a command with a reason, interrupt a long `sleep`.

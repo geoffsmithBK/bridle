@@ -1,7 +1,7 @@
 //! Keys → UI changes and Commands for the agent.
 
 use crate::events::Command;
-use crate::ui::app::{App, Block};
+use crate::ui::app::{APPROVAL_GRACE, App, Block};
 use crate::ui::editor::Editor;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -45,6 +45,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Option<Command> {
     match key.code {
         KeyCode::Char('c') if ctrl => {
             if app.busy {
+                // A second Ctrl-C while the first goes unanswered (e.g. the
+                // server is silent) quits; main gives the agent a moment, then exits.
+                if app.interrupting {
+                    app.quit = true;
+                    return Some(Command::Quit);
+                }
+                app.interrupting = true;
                 return Some(Command::Interrupt);
             }
             if !app.input.is_empty() {
@@ -102,7 +109,9 @@ fn approval_key(app: &mut App, key: KeyEvent, ctrl: bool) -> Option<Command> {
         }
         return None;
     }
+    let settled = pending.opened.elapsed() >= APPROVAL_GRACE;
     match key.code {
+        KeyCode::Char('y' | 'n' | 'r') if !settled => None,
         KeyCode::Char('y') => {
             app.pending = None;
             Some(Command::Approve)

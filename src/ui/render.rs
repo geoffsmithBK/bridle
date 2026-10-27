@@ -15,7 +15,8 @@ const TAIL_LINES: usize = 8;
 const INPUT_LINES: usize = 6;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let input_height = app.input.lines().len().clamp(1, INPUT_LINES) as u16 + 1;
+    let (rows, _) = input_rows(app, f.area().width as usize);
+    let input_height = rows.len().clamp(1, INPUT_LINES) as u16 + 1;
     let [convo, input, status] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(input_height), Constraint::Length(1)])
             .areas(f.area());
@@ -153,6 +154,11 @@ fn draw_conversation(f: &mut Frame, app: &mut App, area: Rect) {
         .map(|l| Paragraph::new(l.clone()).wrap(Wrap { trim: false }).line_count(area.width).max(1))
         .collect();
     let total: usize = heights.iter().sum();
+    // While scrolled up, rows arriving below must not move the view.
+    if app.scroll_back > 0 && total > app.last_total {
+        app.scroll_back += total - app.last_total;
+    }
+    app.last_total = total;
     let height = area.height as usize;
     let max_back = total.saturating_sub(height);
     app.scroll_back = app.scroll_back.min(max_back);
@@ -170,22 +176,42 @@ fn draw_conversation(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Paragraph::new(visible).wrap(Wrap { trim: false }).scroll((offset, 0)), area);
 }
 
+/// The input as screen rows ("> " / "  " prefixes, hard-wrapped to `width`)
+/// and the cursor's (row, column) among them.
+fn input_rows(app: &App, width: usize) -> (Vec<String>, (usize, usize)) {
+    let text_w = width.saturating_sub(2).max(1);
+    let (cursor_line, cursor_col) = app.input.cursor_pos();
+    let mut rows = vec![];
+    let mut cursor = (0, 0);
+    for (i, line) in app.input.lines().iter().enumerate() {
+        let chars: Vec<char> = line.chars().collect();
+        let start = rows.len();
+        let prefix = |r: usize| if i == 0 && r == 0 { "> " } else { "  " };
+        if chars.is_empty() {
+            rows.push(prefix(0).to_string());
+        }
+        for (r, chunk) in chars.chunks(text_w).enumerate() {
+            rows.push(format!("{}{}", prefix(r), chunk.iter().collect::<String>()));
+        }
+        if i == cursor_line {
+            cursor = (start + cursor_col / text_w, cursor_col % text_w);
+            if cursor.0 == rows.len() {
+                rows.push("  ".to_string()); // cursor just past a full row
+            }
+        }
+    }
+    (rows, cursor)
+}
+
 fn draw_input(f: &mut Frame, app: &App, area: Rect) {
     let title = if app.busy { " working… Ctrl-C interrupts " } else { "" };
     let frame = Frame_::default().borders(Borders::TOP).title(title).border_style(dim());
     let inner = frame.inner(area);
     f.render_widget(frame, area);
 
-    let (row, col) = app.input.cursor_pos();
+    let (rows, (row, col)) = input_rows(app, inner.width as usize);
     let first = row.saturating_sub(INPUT_LINES - 1);
-    let lines: Vec<Line> = app
-        .input
-        .lines()
-        .into_iter()
-        .enumerate()
-        .skip(first)
-        .map(|(i, l)| Line::raw(format!("{}{l}", if i == 0 { "> " } else { "  " })))
-        .collect();
+    let lines: Vec<Line> = rows.into_iter().skip(first).map(Line::raw).collect();
     f.render_widget(Paragraph::new(lines), inner);
     if app.pending.is_none() && app.wire_view.is_none() {
         f.set_cursor_position(Position::new(inner.x + 2 + col as u16, inner.y + (row - first) as u16));
@@ -225,8 +251,8 @@ fn centered(area: Rect, pct_w: u16, pct_h: u16) -> Rect {
     Rect::new(area.x + (area.width - w) / 2, area.y + (area.height - h) / 2, w, h)
 }
 
-fn draw_approval(f: &mut Frame, app: &App) {
-    let Some(p) = &app.pending else { return };
+fn draw_approval(f: &mut Frame, app: &mut App) {
+    let Some(p) = app.pending.as_mut() else { return };
     let area = centered(f.area(), 90, 80);
     f.render_widget(Clear, area);
 
@@ -266,11 +292,22 @@ fn draw_approval(f: &mut Frame, app: &App) {
             Line::styled(l.to_string(), style)
         })
         .collect();
-    f.render_widget(Paragraph::new(lines).scroll((p.scroll, 0)), body);
+    // Wrapped, never clipped: everything that will run must be visible. The
+    // footer says where the view is, so nothing below goes unnoticed.
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    let total = paragraph.line_count(body.width).max(1);
+    let max_scroll = total.saturating_sub(body.height as usize);
+    p.scroll = p.scroll.min(max_scroll as u16);
+    f.render_widget(paragraph.scroll((p.scroll, 0)), body);
+    let first = p.scroll as usize + 1;
+    let last = (p.scroll as usize + body.height as usize).min(total);
 
     match &p.reason {
         None => f.render_widget(
-            Paragraph::new(" [y] approve   [n] deny   [r] deny with reason   (j/k scroll)").bold(),
+            Paragraph::new(format!(
+                " [y] approve   [n] deny   [r] deny with reason   rows {first}–{last} of {total}"
+            ))
+            .bold(),
             footer,
         ),
         Some(reason) => {

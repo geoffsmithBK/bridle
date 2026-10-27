@@ -73,6 +73,7 @@ wait_for 5 "run result in transcript" in_transcript "hello from bridle"
 echo "== deny with a reason reaches the model"
 type_line "Use bash to run: ls -la"
 wait_for 120 "approval prompt" on_screen "[y] approve"
+sleep 1 # answers are ignored for the first half second
 keys r
 type_line "not now"
 wait_for 10 "denial in transcript" in_transcript "Denied by user: not now"
@@ -81,6 +82,7 @@ approve_until_idle
 echo "== interrupting a running command"
 type_line "Use bash to run: sleep 60"
 wait_for 120 "approval prompt" on_screen "[y] approve"
+sleep 1 # answers are ignored for the first half second
 keys y
 sleep 2
 keys C-c

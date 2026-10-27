@@ -41,7 +41,16 @@ pub struct Pending {
     pub scroll: u16,
     /// Some while typing a deny reason.
     pub reason: Option<Editor>,
+    /// When the overlay appeared; answers are ignored for `APPROVAL_GRACE`.
+    pub opened: Instant,
 }
+
+/// Keys pressed this soon after an approval appears are typed-ahead input,
+/// not a decision about a command the user hasn't seen yet.
+pub const APPROVAL_GRACE: Duration = Duration::from_millis(500);
+
+/// Live output lines kept per running command.
+const LIVE_LINES: usize = 200;
 
 #[derive(Debug)]
 pub struct App {
@@ -54,6 +63,8 @@ pub struct App {
     pub show_tools: bool,
     /// Rows scrolled up from the bottom; 0 means following new output.
     pub scroll_back: usize,
+    /// Total conversation rows at the last draw, to hold a scrolled-up view still.
+    pub last_total: usize,
     /// Height of the conversation pane at the last draw.
     pub view_height: u16,
     /// Pretty JSON of each model exchange, for the inspector.
@@ -65,6 +76,8 @@ pub struct App {
     /// Ctrl-C was pressed on an empty input; another quits.
     pub quit_armed: bool,
     pub quit: bool,
+    /// An interrupt was sent and the agent hasn't gone idle yet.
+    pub interrupting: bool,
     pub model: String,
     pub online: bool,
     pub n_ctx: u64,
@@ -85,12 +98,14 @@ impl App {
             show_thinking: false,
             show_tools: false,
             scroll_back: 0,
+            last_total: 0,
             view_height: 0,
             wire: vec![],
             wire_view: None,
             ctrl_x: false,
             quit_armed: false,
             quit: false,
+            interrupting: false,
             model: String::new(),
             online: false,
             n_ctx: 0,
@@ -157,25 +172,32 @@ impl App {
             }
             AgentEvent::ApprovalNeeded(request) => {
                 self.activity = "waiting for approval".into();
-                self.pending = Some(Pending { request, scroll: 0, reason: None });
+                self.pending = Some(Pending { request, scroll: 0, reason: None, opened: Instant::now() });
             }
             AgentEvent::ToolOutput { id, line } => {
                 let block = if id == "!" { self.running_shell() } else { self.tool_mut(&id) };
                 match block {
-                    Some(Block::Tool { live, .. }) | Some(Block::Shell { live, .. }) => live.push(line),
+                    Some(Block::Tool { live, .. }) | Some(Block::Shell { live, .. }) => {
+                        live.push(line);
+                        if live.len() > LIVE_LINES {
+                            live.remove(0);
+                        }
+                    }
                     _ => {}
                 }
             }
             AgentEvent::ToolResult { id, status, content } => {
                 self.pending = None;
-                if let Some(Block::Tool { status: s, result, .. }) = self.tool_mut(&id) {
+                if let Some(Block::Tool { status: s, result, live, .. }) = self.tool_mut(&id) {
                     *s = Some(status);
                     *result = content;
+                    live.clear(); // the result holds the output now
                 }
             }
             AgentEvent::ShellResult { command, output } => {
-                if let Some(Block::Shell { output: o, .. }) = self.running_shell() {
+                if let Some(Block::Shell { output: o, live, .. }) = self.running_shell() {
                     *o = Some(output);
+                    live.clear();
                 } else {
                     self.blocks.push(Block::Shell { command, live: vec![], output: Some(output) });
                 }
@@ -210,6 +232,7 @@ impl App {
             AgentEvent::Info(text) => self.blocks.push(Block::Info(text)),
             AgentEvent::Idle => {
                 self.busy = false;
+                self.interrupting = false;
                 self.pending = None;
                 self.activity.clear();
             }

@@ -19,10 +19,28 @@ pub fn check_command(command: &str) -> Result<(), String> {
 
 /// Create a directory holding a `sudo` that always fails. It is put first on
 /// PATH for every command bridle runs.
+///
+/// The directory is new (never one that already existed), unpredictably
+/// named and private (0700). Otherwise, on Linux where the temp dir is the
+/// shared /tmp, another user could pre-create it and plant programs there.
 pub fn make_shim_dir() -> std::io::Result<PathBuf> {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = std::env::temp_dir().join(format!("bridle-shim-{}", std::process::id()));
-    std::fs::create_dir_all(&dir)?;
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let mut attempt = 0;
+    let dir = loop {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("bridle-shim-{}-{nanos:x}-{n}", std::process::id()));
+        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => break dir,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempt < 10 => attempt += 1,
+            Err(e) => return Err(e),
+        }
+    };
     let shim = dir.join("sudo");
     std::fs::write(&shim, "#!/bin/sh\necho 'sudo is disabled inside bridle' >&2\nexit 1\n")?;
     std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))?;

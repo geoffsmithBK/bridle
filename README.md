@@ -39,8 +39,10 @@ enforced in code and cannot be turned off by it.
 | edit  | yes      | `old_text` must match exactly once; you approve the exact diff that will be written |
 | write | yes      | creates parent dirs; overwrites are shown as a diff |
 
-The approval box shows the exact command or diff. `y` approves, `n` denies,
-`r` denies with a reason that is passed to the model. Changes outside the
+The approval box shows the exact command or diff, wrapped so nothing is
+hidden, with a "rows A–B of N" position. `y` approves, `n` denies, `r` denies
+with a reason that is passed to the model. Keys pressed in the first half
+second after the box appears are ignored, so typing ahead can't answer it. Changes outside the
 launch directory are marked **OUTSIDE PROJECT**.
 
 ### Privilege escalation
@@ -71,7 +73,7 @@ not persist.
 | Ctrl-X o | show/hide tool output |
 | Ctrl-X t | show/hide thinking (hidden by default) |
 | Ctrl-X w | wire inspector (raw JSON of each exchange) |
-| Ctrl-C | interrupt; clear input; twice on empty input to quit |
+| Ctrl-C | interrupt (again to force quit if the server doesn't respond); clear input; twice on empty input to quit |
 
 Input editing: Ctrl-F/B (char), Alt-F/B (word), Ctrl-A/E (line start/end),
 Ctrl-P/N (line up/down), Ctrl-D/H (delete char), Alt-D / Alt-Backspace

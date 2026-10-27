@@ -111,3 +111,37 @@ fn one_huge_line_is_truncated_for_the_model() {
     assert!(text.contains("chars omitted"));
     assert!(text.ends_with("[exit code: 0]"));
 }
+
+#[test]
+fn runaway_output_keeps_memory_bounded() {
+    let mut calls = 0;
+    let dir = common::temp_dir();
+    let r =
+        run("yes | head -c 20000000", &dir, &make_shim_dir().unwrap(), 30, &mut |_| calls += 1, &mut || {
+            false
+        })
+        .unwrap();
+    assert_eq!(r.exit, Exit::Code(0));
+    assert!(r.output.len() < 40_000, "{}", r.output.len());
+    assert!(r.output.contains("chars omitted"));
+    assert!(calls < 100_000, "{calls} UI line callbacks");
+}
+
+#[test]
+fn escaped_background_writer_does_not_hang_the_tool() {
+    // A process that leaves the process group keeps writing to the pipe for 4 s.
+    let script = "python3 -c 'import os,time\nos.setsid()\nend=time.time()+4\nwhile time.time()<end: print(\"x\", flush=True)' & echo started";
+    let start = Instant::now();
+    let (r, _) = sh(script, 10);
+    assert_eq!(r.exit, Exit::Code(0));
+    assert!(start.elapsed().as_secs_f64() < 3.0, "{:?}", start.elapsed());
+}
+
+#[test]
+fn shim_dirs_are_private_and_unique() {
+    use std::os::unix::fs::PermissionsExt;
+    let a = make_shim_dir().unwrap();
+    let b = make_shim_dir().unwrap();
+    assert_ne!(a, b);
+    assert_eq!(std::fs::metadata(&a).unwrap().permissions().mode() & 0o777, 0o700);
+}

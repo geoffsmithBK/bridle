@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use bridle::tools::{ToolContext, guard};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -15,4 +16,10 @@ pub fn temp_dir() -> PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     // Canonical form, so paths compare equal (macOS /var -> /private/var).
     dir.canonicalize().unwrap()
+}
+
+/// A tool context rooted in a fresh temp dir.
+pub fn context() -> ToolContext {
+    let dir = temp_dir();
+    ToolContext { cwd: dir.clone(), project_root: dir, shim_dir: guard::make_shim_dir().unwrap() }
 }

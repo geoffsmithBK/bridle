@@ -48,6 +48,9 @@ pub struct Agent<L: Llm> {
     online: bool,
     /// Set when a Quit arrives while busy.
     quit: Cell<bool>,
+    /// Run approval-needing calls without asking. Only the user's ApproveAll
+    /// turns this on; it is never saved and is off in every new session.
+    auto_approve: Cell<bool>,
 }
 
 impl<L: Llm> Agent<L> {
@@ -69,6 +72,7 @@ impl<L: Llm> Agent<L> {
             commands,
             online: false,
             quit: Cell::new(false),
+            auto_approve: Cell::new(false),
         };
         agent.reset();
         agent
@@ -83,8 +87,12 @@ impl<L: Llm> Agent<L> {
                 Command::UserShell(command) => self.user_shell(command),
                 Command::NewSession => self.reset(),
                 Command::Quit => break,
+                Command::AutoApproveOff => {
+                    self.set_auto_approve(false);
+                    continue;
+                }
                 // Only meaningful while busy; stale ones are dropped.
-                Command::Approve | Command::Deny(_) | Command::Interrupt => continue,
+                Command::Approve | Command::ApproveAll | Command::Deny(_) | Command::Interrupt => continue,
             }
             if self.quit.get() {
                 break;
@@ -101,6 +109,7 @@ impl<L: Llm> Agent<L> {
 
     /// Fresh history (re-reading AGENTS.md) and fresh log files.
     fn reset(&mut self) {
+        self.set_auto_approve(false);
         let agents_md = crate::prompt::load_agents_md(&self.ctx.project_root);
         let prompt = crate::prompt::system_prompt(&self.ctx.cwd, &crate::time::today(), agents_md.as_deref());
         self.messages = vec![Message::System { content: prompt }];
@@ -241,15 +250,27 @@ impl<L: Llm> Agent<L> {
         }
     }
 
-    /// True if an Interrupt (or Quit) is waiting. Non-blocking.
-    fn interrupt_pending(commands: &Receiver<Command>, quit: &Cell<bool>) -> bool {
-        match commands.try_recv() {
+    /// True if an Interrupt (or Quit) is waiting. Non-blocking. An
+    /// AutoApproveOff that arrives while busy is applied here, so it isn't lost.
+    fn interrupt_pending(&self) -> bool {
+        match self.commands.try_recv() {
             Ok(Command::Interrupt) => true,
             Ok(Command::Quit) => {
-                quit.set(true);
+                self.quit.set(true);
                 true
             }
+            Ok(Command::AutoApproveOff) => {
+                self.set_auto_approve(false);
+                false
+            }
             _ => false,
+        }
+    }
+
+    fn set_auto_approve(&self, on: bool) {
+        if self.auto_approve.get() != on {
+            self.auto_approve.set(on);
+            self.emit(AgentEvent::AutoApprove(on));
         }
     }
 
@@ -257,11 +278,9 @@ impl<L: Llm> Agent<L> {
     /// Returns the result and whether the user interrupted.
     fn stream(&self, request: &Value) -> (Result<Streamed, LlmError>, bool) {
         let events = &self.events;
-        let commands = &self.commands;
-        let quit = &self.quit;
         let mut interrupted = false;
         let result = self.llm.stream(request, &mut |delta| {
-            if Self::interrupt_pending(commands, quit) {
+            if self.interrupt_pending() {
                 interrupted = true;
                 return false;
             }
@@ -286,6 +305,11 @@ impl<L: Llm> Agent<L> {
         let (status, content) = match tools::prepare(&call.function.name, &args, &self.ctx) {
             Prepared::Failed(msg) => (ToolStatus::Error, format!("Error: {msg}")),
             Prepared::Ready(action) => self.execute(&id, &action),
+            Prepared::NeedsApproval(request, action) if self.auto_approve.get() => {
+                self.log.md(&format!("**Auto-approved:**\n\n```\n{}\n```\n", request.body));
+                self.emit(AgentEvent::AutoApproved { id: id.clone() });
+                self.execute(&id, &action)
+            }
             Prepared::NeedsApproval(request, action) => {
                 self.log.md(&format!("Approval requested:\n\n```\n{}\n```\n", request.body));
                 match self.ask(request) {
@@ -323,15 +347,13 @@ impl<L: Llm> Agent<L> {
 
     fn execute(&self, id: &str, action: &Action) -> (ToolStatus, String) {
         let events = &self.events;
-        let commands = &self.commands;
-        let quit = &self.quit;
         tools::execute(
             action,
             &self.ctx,
             &mut |line| {
                 let _ = events.send(AgentEvent::ToolOutput { id: id.to_string(), line: line.to_string() });
             },
-            &mut || Self::interrupt_pending(commands, quit),
+            &mut || self.interrupt_pending(),
         )
     }
 
@@ -341,6 +363,11 @@ impl<L: Llm> Agent<L> {
         loop {
             match self.commands.recv() {
                 Ok(Command::Approve) => return Decision::Approve,
+                Ok(Command::ApproveAll) => {
+                    self.set_auto_approve(true);
+                    return Decision::Approve;
+                }
+                Ok(Command::AutoApproveOff) => self.set_auto_approve(false),
                 Ok(Command::Deny(reason)) => return Decision::Deny(reason),
                 Ok(Command::Interrupt) => return Decision::Interrupt,
                 Ok(Command::Quit) | Err(_) => {
@@ -388,8 +415,6 @@ impl<L: Llm> Agent<L> {
             Err(msg) => format!("Error: {msg}"),
             Ok(()) => {
                 let events = &self.events;
-                let commands = &self.commands;
-                let quit = &self.quit;
                 let result = bash::run(
                     &command,
                     &self.ctx.cwd,
@@ -399,7 +424,7 @@ impl<L: Llm> Agent<L> {
                         let _ =
                             events.send(AgentEvent::ToolOutput { id: "!".into(), line: line.to_string() });
                     },
-                    &mut || Self::interrupt_pending(commands, quit),
+                    &mut || self.interrupt_pending(),
                 );
                 match result {
                     Ok(r) => r.for_model(),

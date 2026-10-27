@@ -11,6 +11,10 @@ pub enum Command {
     /// A `!command` typed by the user (without the `!`).
     UserShell(String),
     Approve,
+    /// Approve this call and every later one this session (auto-approve).
+    ApproveAll,
+    /// Turn auto-approve off.
+    AutoApproveOff,
     /// Deny the pending approval, optionally with a reason for the model.
     Deny(Option<String>),
     Interrupt,
@@ -57,6 +61,12 @@ pub enum AgentEvent {
         summary: String,
     },
     ApprovalNeeded(ApprovalRequest),
+    /// Auto-approve was turned on or off.
+    AutoApprove(bool),
+    /// A call ran without asking because auto-approve is on.
+    AutoApproved {
+        id: String,
+    },
     /// One line of live output from a running command.
     ToolOutput {
         id: String,

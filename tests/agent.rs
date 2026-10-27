@@ -413,3 +413,94 @@ fn agents_md_extends_the_prompt_but_cannot_unlock_sudo() {
     let m = h.finish();
     assert_eq!(tool_results(&m), ["Error: privilege escalation is not permitted in bridle."]);
 }
+
+fn bash(id: &str, cmd: &str) -> ToolCall {
+    call(id, "bash", &format!(r#"{{"command":"{cmd}"}}"#))
+}
+
+#[test]
+fn approve_all_stops_asking_for_the_rest_of_the_session() {
+    let h = start(
+        vec![
+            calls(vec![bash("c1", "echo 1")]),
+            calls(vec![bash("c2", "echo 2")]),
+            text("ok"),
+            calls(vec![bash("c3", "echo 3")]),
+            text("ok again"),
+        ],
+        50,
+    );
+    let mut asked = 0;
+    let events = h.submit("go", |_| {
+        asked += 1;
+        Command::ApproveAll
+    });
+    assert_eq!(asked, 1);
+    assert!(events.contains(&AgentEvent::AutoApprove(true)));
+    assert!(events.contains(&AgentEvent::AutoApproved { id: "c2".into() }));
+    assert!(!events.contains(&AgentEvent::AutoApproved { id: "c1".into() }));
+    h.submit("again", never); // c3 runs without asking
+    let m = h.finish();
+    assert_eq!(tool_results(&m), ["1\n[exit code: 0]", "2\n[exit code: 0]", "3\n[exit code: 0]"]);
+}
+
+#[test]
+fn guard_still_blocks_sudo_with_auto_approve_on() {
+    let h = start(vec![calls(vec![bash("c1", "echo 1"), bash("c2", "sudo ls")]), text("ok")], 50);
+    h.submit("go", |_| Command::ApproveAll);
+    let m = h.finish();
+    assert_eq!(tool_results(&m)[1], "Error: privilege escalation is not permitted in bridle.");
+}
+
+#[test]
+fn turning_auto_approve_off_while_busy_is_not_lost() {
+    let streaming_then_bash = Step::Reply {
+        deltas: vec![Delta::Text("running".into())],
+        completion: Completion { tool_calls: vec![bash("c2", "echo 2")], ..Default::default() },
+    };
+    let h = start(vec![calls(vec![bash("c1", "echo 1")]), text("ok"), streaming_then_bash, text("done")], 50);
+    h.submit("first", |_| Command::ApproveAll);
+    // Queued behind Submit: the agent reads it mid-stream, before c2.
+    h.cmd.send(Command::Submit("second".into())).unwrap();
+    h.cmd.send(Command::AutoApproveOff).unwrap();
+    let mut asked = 0;
+    let events = h.until_idle(|_| {
+        asked += 1;
+        Command::Approve
+    });
+    assert_eq!(asked, 1);
+    assert!(events.contains(&AgentEvent::AutoApprove(false)));
+    assert!(events.contains(&AgentEvent::TextDelta("running".into())));
+    h.finish();
+}
+
+#[test]
+fn step_cap_still_asks_with_auto_approve_on() {
+    let h = start(vec![calls(vec![bash("c1", "echo 1")]), calls(vec![bash("c2", "echo 2")])], 1);
+    let mut titles = vec![];
+    h.submit("go", |req| {
+        titles.push(req.title.clone());
+        if req.title == "Continue?" { Command::Deny(None) } else { Command::ApproveAll }
+    });
+    assert_eq!(titles, ["Approve bash?", "Continue?"]);
+    h.finish();
+}
+
+#[test]
+fn new_session_turns_auto_approve_off() {
+    let h = start(
+        vec![calls(vec![bash("c1", "echo 1")]), text("ok"), calls(vec![bash("c2", "echo 2")]), text("ok")],
+        50,
+    );
+    h.submit("go", |_| Command::ApproveAll);
+    h.cmd.send(Command::NewSession).unwrap();
+    let events = h.until_idle(never);
+    assert!(events.contains(&AgentEvent::AutoApprove(false)));
+    let mut asked = 0;
+    h.submit("again", |_| {
+        asked += 1;
+        Command::Approve
+    });
+    assert_eq!(asked, 1);
+    h.finish();
+}

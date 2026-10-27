@@ -29,6 +29,8 @@ pub enum Block {
         status: Option<ToolStatus>,
         live: Vec<String>,
         result: String,
+        /// Ran without asking because auto-approve was on.
+        auto: bool,
     },
     Info(String),
     Error(String),
@@ -78,6 +80,8 @@ pub struct App {
     pub quit: bool,
     /// An interrupt was sent and the agent hasn't gone idle yet.
     pub interrupting: bool,
+    /// Tool calls run without asking (shown in the status line).
+    pub auto_approve: bool,
     pub model: String,
     pub online: bool,
     pub n_ctx: u64,
@@ -106,6 +110,7 @@ impl App {
             quit_armed: false,
             quit: false,
             interrupting: false,
+            auto_approve: false,
             model: String::new(),
             online: false,
             n_ctx: 0,
@@ -168,11 +173,25 @@ impl App {
                     status: None,
                     live: vec![],
                     result: String::new(),
+                    auto: false,
                 });
             }
             AgentEvent::ApprovalNeeded(request) => {
                 self.activity = "waiting for approval".into();
                 self.pending = Some(Pending { request, scroll: 0, reason: None, opened: Instant::now() });
+            }
+            AgentEvent::AutoApprove(on) => {
+                self.auto_approve = on;
+                self.blocks.push(Block::Info(if on {
+                    "auto-approve is on: tool calls run without asking (Ctrl-X a turns it off)".into()
+                } else {
+                    "auto-approve is off".into()
+                }));
+            }
+            AgentEvent::AutoApproved { id } => {
+                if let Some(Block::Tool { auto, .. }) = self.tool_mut(&id) {
+                    *auto = true;
+                }
             }
             AgentEvent::ToolOutput { id, line } => {
                 let block = if id == "!" { self.running_shell() } else { self.tool_mut(&id) };

@@ -31,6 +31,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Option<Command> {
             KeyCode::Char('o') => app.show_tools = !app.show_tools,
             KeyCode::Char('t') => app.show_thinking = !app.show_thinking,
             KeyCode::Char('w') => app.wire_view = Some(0),
+            // Off only: auto-approve is turned on solely from an approval box.
+            KeyCode::Char('a') if app.auto_approve => return Some(Command::AutoApproveOff),
             _ => {}
         }
         return None;
@@ -111,10 +113,14 @@ fn approval_key(app: &mut App, key: KeyEvent, ctrl: bool) -> Option<Command> {
     }
     let settled = pending.opened.elapsed() >= APPROVAL_GRACE;
     match key.code {
-        KeyCode::Char('y' | 'n' | 'r') if !settled => None,
+        KeyCode::Char('y' | 'a' | 'n' | 'r') if !settled => None,
         KeyCode::Char('y') => {
             app.pending = None;
             Some(Command::Approve)
+        }
+        KeyCode::Char('a') => {
+            app.pending = None;
+            Some(Command::ApproveAll)
         }
         KeyCode::Char('n') => {
             app.pending = None;

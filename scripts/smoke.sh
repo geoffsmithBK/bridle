@@ -89,6 +89,21 @@ keys C-c
 wait_for 10 "interrupted" on_screen "[interrupted]"
 wait_for 10 "idle" idle
 
+echo "== approve all, then turn it off"
+type_line "Use bash to run: echo first"
+wait_for 120 "approval prompt" on_screen "[y] approve"
+sleep 1 # answers are ignored for the first half second
+keys a
+wait_for 10 "auto-approve on" on_screen "AUTO-APPROVE"
+wait_for 120 "idle" idle
+type_line "Use bash to run: echo second"
+wait_for 120 "auto-approved call" on_screen "(auto)"
+on_screen "[y] approve" && fail "asked for approval with auto-approve on"
+wait_for 120 "idle" idle
+keys C-x a
+wait_for 10 "auto-approve off" on_screen "auto-approve is off"
+in_transcript "**Auto-approved:**" || fail "transcript does not mark auto-approved calls"
+
 echo "== reasoning stays hidden"
 on_screen "▸ thought for" || fail "no collapsed thinking line"
 

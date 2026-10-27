@@ -22,7 +22,6 @@ authored by bridle itself.
 
 - Multiple providers or endpoints in one session; session persistence/resume.
 - Context compaction (262k context window makes this a later problem).
-- Auto-approval mode (planned; see end of §6.4).
 - Sandboxing beyond the sudo guard (planned: `sandbox-exec` on macOS,
   an equivalent such as bubblewrap/landlock on Linux).
 - Markdown rendering beyond styled code fences; mouse capture (and with it,
@@ -177,9 +176,16 @@ failures (e.g. server unreachable) abort a turn.
 For bash/edit/write, targets outside the project root are allowed but the
 approval overlay shows a red **OUTSIDE PROJECT** marker.
 
-**Future (not v1):** an "approve all from now on" key in the approval overlay,
-toggling auto-approval; to be added once the transcript has established that
-proposed and executed actions match.
+**Auto-approve (added after v1):** the approval box offers `[a] approve
+all`, which approves the call and turns on auto-approve for the rest of the
+session: later bash/edit/write calls run without asking. While on, the
+status line shows `AUTO-APPROVE`, each call is marked `(auto)` in the UI and
+`**Auto-approved:**` (with the exact command/diff) in the transcript. Ctrl-X
+a turns it off (taking effect even mid-turn); `/new` and every new session
+start with it off. Only the user's keypress in an approval box turns it on —
+never the model, AGENTS.md, or any saved setting. The guard (§6.5) still
+rejects privilege escalation first, and the step-cap "Continue?" prompt
+still asks.
 
 ### 6.5 Guard (`guard.rs`)
 Layered, honest about limits — it is not a sandbox:

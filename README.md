@@ -42,7 +42,15 @@ enforced in code and cannot be turned off by it.
 The approval box shows the exact command or diff, wrapped so nothing is
 hidden, with a "rows A–B of N" position. `y` approves, `n` denies, `r` denies
 with a reason that is passed to the model. Keys pressed in the first half
-second after the box appears are ignored, so typing ahead can't answer it. Changes outside the
+second after the box appears are ignored, so typing ahead can't answer it.
+
+`a` approves the call **and every later one this session** (auto-approve).
+The status line shows `AUTO-APPROVE` while it is on, each such call is marked
+`(auto)`, and the transcript records it as auto-approved. Ctrl-X a turns it
+off; `/new` and every new session start with it off. It can only be turned
+on from an approval box, never by the model or AGENTS.md, and the
+privilege-escalation guard still applies. The "Continue?" prompt after 50
+model requests still asks. Changes outside the
 launch directory are marked **OUTSIDE PROJECT**.
 
 ### Privilege escalation
@@ -73,6 +81,7 @@ not persist.
 | Ctrl-X o | show/hide tool output |
 | Ctrl-X t | show/hide thinking (hidden by default) |
 | Ctrl-X w | wire inspector (raw JSON of each exchange) |
+| Ctrl-X a | turn auto-approve off |
 | Ctrl-C | interrupt (again to force quit if the server doesn't respond); clear input; twice on empty input to quit |
 
 Input editing: Ctrl-F/B (char), Alt-F/B (word), Ctrl-A/E (line start/end),

@@ -81,7 +81,7 @@ fn renders_approval_overlay_with_diff_and_flags() {
     assert!(s.contains("Approve write?"), "{s}");
     assert!(s.contains("OVERWRITE") && s.contains("OUTSIDE PROJECT"), "{s}");
     assert!(s.contains("+new") && s.contains("-old"), "{s}");
-    assert!(s.contains("[y] approve   [n] deny   [r] deny with reason"), "{s}");
+    assert!(s.contains("[y] approve   [a] approve all   [n] deny   [r] deny with reason"), "{s}");
 }
 
 #[test]
@@ -200,4 +200,20 @@ fn long_input_wraps_and_keeps_the_cursor_on_screen() {
     assert!(text.contains("END"), "{text}");
     let cursor = t.get_cursor_position().unwrap();
     assert!(cursor.x < 30 && cursor.y < 12, "{cursor:?}");
+}
+
+#[test]
+fn auto_approve_shows_in_status_and_on_tool_calls() {
+    let mut a = app();
+    a.on_agent_event(AgentEvent::AutoApprove(true));
+    a.on_agent_event(AgentEvent::ToolCallParsed {
+        id: "1".into(),
+        name: "bash".into(),
+        summary: "bash  ls".into(),
+    });
+    a.on_agent_event(AgentEvent::AutoApproved { id: "1".into() });
+    a.on_agent_event(AgentEvent::ToolResult { id: "1".into(), status: ToolStatus::Ok, content: "x".into() });
+    let s = screen(&mut a, 80, 10);
+    assert!(s.contains("AUTO-APPROVE"), "{s}");
+    assert!(s.contains("✓ bash  ls  (auto)"), "{s}");
 }

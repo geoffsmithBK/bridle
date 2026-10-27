@@ -102,7 +102,7 @@ pub fn conversation_lines(app: &App) -> Vec<Line<'static>> {
                     }
                 }
             }
-            Block::Tool { summary, status, live, result, .. } => {
+            Block::Tool { summary, status, live, result, auto, .. } => {
                 let (icon, color) = match status {
                     None => ("⏳", Color::Yellow),
                     Some(ToolStatus::Ok) => ("✓", Color::Green),
@@ -119,6 +119,7 @@ pub fn conversation_lines(app: &App) -> Vec<Line<'static>> {
                 out.push(Line::from(vec![
                     Span::styled(format!("{icon} "), Style::default().fg(color)),
                     Span::raw(summary.clone()).bold(),
+                    Span::styled(if *auto { "  (auto)" } else { "" }, Style::default().fg(Color::Yellow)),
                     Span::styled(suffix, dim()),
                 ]));
                 match status {
@@ -230,6 +231,11 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     if let Some(tps) = app.tokens_per_sec {
         spans.push(Span::styled(format!(" · {tps:.0} tok/s"), dim()));
     }
+    if app.auto_approve {
+        spans.push(Span::raw(" "));
+        spans
+            .push(Span::styled(" AUTO-APPROVE ", Style::default().fg(Color::Black).bg(Color::Yellow).bold()));
+    }
     if !app.activity.is_empty() {
         spans.push(Span::styled(format!(" · {}", app.activity), Style::default().fg(Color::Yellow)));
     }
@@ -270,7 +276,7 @@ fn draw_approval(f: &mut Frame, app: &mut App) {
     let frame = Frame_::default().borders(Borders::ALL).title(Line::from(title));
     let inner = frame.inner(area);
     f.render_widget(frame, area);
-    let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    let [body, footer] = Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).areas(inner);
 
     let is_diff = p.request.body.starts_with("--- ");
     let lines: Vec<Line> = p
@@ -304,10 +310,10 @@ fn draw_approval(f: &mut Frame, app: &mut App) {
 
     match &p.reason {
         None => f.render_widget(
-            Paragraph::new(format!(
-                " [y] approve   [n] deny   [r] deny with reason   rows {first}–{last} of {total}"
-            ))
-            .bold(),
+            Paragraph::new(vec![
+                Line::raw(" [y] approve   [a] approve all   [n] deny   [r] deny with reason").bold(),
+                Line::styled(format!(" rows {first}–{last} of {total}   (j/k scroll)"), dim()),
+            ]),
             footer,
         ),
         Some(reason) => {

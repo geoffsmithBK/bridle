@@ -240,3 +240,36 @@ fn live_output_is_capped_and_cleared_when_the_result_arrives() {
     let Block::Tool { live, .. } = &a.blocks[0] else { panic!() };
     assert!(live.is_empty());
 }
+
+fn bash_req() -> ApprovalRequest {
+    ApprovalRequest {
+        title: "Approve bash?".into(),
+        subject: "".into(),
+        body: "ls".into(),
+        outside_project: false,
+        overwrite: false,
+    }
+}
+
+#[test]
+fn a_approves_all_but_not_during_the_grace_period() {
+    let mut a = app();
+    a.on_agent_event(AgentEvent::ApprovalNeeded(bash_req()));
+    assert_eq!(handle_key(&mut a, key(KeyCode::Char('a'))), None);
+    a.pending.as_mut().unwrap().opened = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
+    assert_eq!(handle_key(&mut a, key(KeyCode::Char('a'))), Some(Command::ApproveAll));
+    assert!(a.pending.is_none());
+}
+
+#[test]
+fn ctrl_x_a_turns_auto_approve_off_only_when_on() {
+    let mut a = app();
+    handle_key(&mut a, ctrl('x'));
+    assert_eq!(handle_key(&mut a, key(KeyCode::Char('a'))), None); // can't turn it on from here
+    a.on_agent_event(AgentEvent::AutoApprove(true));
+    assert!(a.auto_approve);
+    handle_key(&mut a, ctrl('x'));
+    assert_eq!(handle_key(&mut a, key(KeyCode::Char('a'))), Some(Command::AutoApproveOff));
+    a.on_agent_event(AgentEvent::AutoApprove(false));
+    assert!(!a.auto_approve);
+}

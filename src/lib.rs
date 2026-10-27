@@ -7,3 +7,4 @@
 pub mod events;
 pub mod llm;
 pub mod time;
+pub mod tools;

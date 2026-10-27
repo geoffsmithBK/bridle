@@ -1,0 +1,22 @@
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"role":"assistant","content":null}}]}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"reasoning_content":"The"}}]}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"reasoning_content":" user"}}]}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"reasoning_content":" wants"}}]}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":"Hi"}}]}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" there"}}]}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" friend"}}]}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":"."}}]}
+
+data: {"choices":[{"finish_reason":"stop","index":0,"delta":{}}]}
+
+data: {"choices":[],"usage":{"completion_tokens":105,"prompt_tokens":51,"total_tokens":156},"timings":{"predicted_per_second":17.956628870840557}}
+
+data: [DONE]
+

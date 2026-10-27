@@ -268,9 +268,9 @@ status line (model · ctx used/total · tok/s · state · key hint).
 
 Blocks in the conversation:
 - user message; `!` command + output;
-- thinking — **hidden by default**: always a single dim line,
-  `▸ thinking… (N words)` while streaming and `▸ thinking (N words)` when
-  done. Ctrl-X t expands all thinking blocks (global toggle in v1;
+- thinking — **hidden by default**: always a single dim line with a
+  timer, `▸ thinking… 7s` while streaming and `▸ thought for 12s` when
+  done (the arrow becomes `▾` when expanded). Ctrl-X t expands all thinking blocks (global toggle in v1;
   per-block click-to-expand arrives with mouse support);
 - assistant text — plain, code fences styled;
 - tool call — `⏳/✓/✗/⊘ tool summary`; running bash shows last 8 output
